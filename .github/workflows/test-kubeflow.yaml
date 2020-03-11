@@ -1,0 +1,33 @@
+name: Deploy and test Kubeflow
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Test Kubeflow
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checking out repo
+      uses: actions/checkout@v2
+    - name: Install lxd
+      run: sudo snap install lxd
+    - name: Migrate lxd
+      run: sudo /snap/bin/lxd.migrate -yes
+    - name: Wait for lxd to be ready
+      run: sudo /snap/bin/lxd waitready
+    - name: Initialise lxd
+      run: sudo /snap/bin/lxd init --auto
+    - name: Install snapcraft
+      run: sudo snap install snapcraft --classic
+    - name: Build snap
+      run: sudo snapcraft --use-lxd
+    - name: Install microk8s snap
+      run: sudo snap install microk8s*.snap --classic --dangerous
+    - name: Enable Kubeflow
+      run: sudo microk8s.enable kubeflow
+      env:
+        KUBEFLOW_DEBUG: "true"
+    - name: Get snap logs
+      run: sudo snap logs microk8s -n=all
+      if: failure()

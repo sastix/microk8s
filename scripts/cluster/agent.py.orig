@@ -286,9 +286,15 @@ def join_node() -> wrappers.Response:
         voters = get_dqlite_voters()
     callback_token = get_callback_token()  # type: str
     remove_token_from_file(token, cluster_tokens_file)
-    node_addr = request.remote_addr  # type: str
+<<<<<<< HEAD
+    node_addr: str = request.remote_addr
+    api_port: Optional[str] = get_arg('--secure-port', 'kube-apiserver')
+    kubelet_args: Optional[str] = read_kubelet_args_file()
+=======
+    node_addr = get_node_ep(hostname, request.remote_addr)  # type: str
     api_port = get_arg('--secure-port', 'kube-apiserver')  # type: Optional[str]
     kubelet_args = read_kubelet_args_file()  # type: Optional[str]
+>>>>>>> fbf5744f08e8c3b0be74f4f4106b64b7a9586833
     cluster_cert, cluster_key = get_cluster_certs()
 
     return jsonify(ca=get_cert("ca.crt"),

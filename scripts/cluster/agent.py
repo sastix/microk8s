@@ -191,22 +191,6 @@ def read_kubelet_args_file(node: Optional[str] = None) -> Optional[str]:
         return args
 
 
-def get_node_ep(hostname: str, remote_addr: str) -> str:
-    """
-    Return the endpoint to be used for the node based by trying to resolve the hostname provided
-    
-    :param hostname: the provided hostname
-    :param remote_addr: the address the request came from
-    :returns: the node's location
-    """
-    try:
-        socket.gethostbyname(hostname)
-        return hostname
-    except socket.gaierror:
-        return remote_addr
-    return remote_addr
-
-
 def get_dqlite_voters() -> List[str]:
     """
     Get the voting members of the dqlite cluster
@@ -264,6 +248,17 @@ def update_dqlite_ip(host: str) -> None:
     with open("{}/update.yaml".format(cluster_dir), 'w') as f:
         yaml.dump(update_data, f)
     subprocess.check_call("systemctl start snap.microk8s.daemon-apiserver.service".split())
+    time.sleep(10)
+    attempts = 12
+    while True:
+        voters = get_dqlite_voters()
+        if len(voters) > 0 and not voters[0].startswith("127.0.0.1"):
+            break
+        else:
+            time.sleep(5)
+            attempts -= 1
+        if attempts <= 0:
+            break
 
 
 @app.route('/{}/join'.format(CLUSTER_API_V2), methods=['POST'])
@@ -291,7 +286,7 @@ def join_node() -> wrappers.Response:
         voters = get_dqlite_voters()
     callback_token: str = get_callback_token()
     remove_token_from_file(token, cluster_tokens_file)
-    node_addr: str = get_node_ep(hostname, request.remote_addr)
+    node_addr: str = request.remote_addr
     api_port: Optional[str] = get_arg('--secure-port', 'kube-apiserver')
     kubelet_args: Optional[str] = read_kubelet_args_file()
     cluster_cert, cluster_key = get_cluster_certs()

@@ -208,7 +208,7 @@ def get_dqlite_voters() -> List[str]:
         try:
             with open("{}/info.yaml".format(cluster_dir)) as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
-                out = subprocess.check_output("curl https://{}/cluster --cacert {} --key {} --cert {} -k -s"
+                out = subprocess.check_output("curl https://{}/cluster/ --cacert {} --key {} --cert {} -k -s"
                                               .format(data['Address'], cluster_cert_file,
                                                       cluster_key_file, cluster_cert_file).split())
                 if data['Address'] in out.decode():

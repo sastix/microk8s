@@ -1,7 +1,7 @@
 #!flask/bin/python
 import getopt
 import json
-import yaml
+import logging
 import os
 import random
 import shutil
@@ -10,13 +10,21 @@ import string
 import subprocess
 import sys
 
+import yaml
+from flask import Flask, jsonify, request, Response
+from flask_swagger_ui import get_swaggerui_blueprint
+
 from .common.utils import try_set_file_permissions
+from .utils.exceptions import ServiceError, UnknownServiceError, InvalidTokenError
+from .utils.service import ServiceUtils
 
 from flask import Flask, jsonify, request, abort, Response
 from flask_swagger_ui import get_swaggerui_blueprint
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
-CLUSTER_API="cluster/api/v1.0"
+CLUSTER_API = "cluster/api/v1.0"
 snapdata_path = os.environ.get('SNAP_DATA')
 snap_path = os.environ.get('SNAP')
 cluster_tokens_file = "{}/credentials/cluster-tokens.txt".format(snapdata_path)
@@ -37,6 +45,8 @@ SWAGGERUI_BLUEPRINT = get_swaggerui_blueprint(
     }
 )
 app.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix=SWAGGER_URL)
+
+
 # -- end swagger specific --
 
 def get_service_name(service):
@@ -236,15 +246,23 @@ def is_valid(token_line, token_type=cluster_tokens_file):
     :returns: True for a valid token, False otherwise
     """
     token = token_line.strip()
+
     # Ensure token is not empty
     if not token:
-        return False
+        raise InvalidTokenError
 
-    with open(token_type) as fp:
-        for _, line in enumerate(fp):
-            if token == line.strip():
-                return True
-    return False
+    token_valid = False
+
+    try:
+        with open(token_type) as fp:
+            for _, line in enumerate(fp):
+                if token == line.strip():
+                    token_valid = True
+    except FileNotFoundError:
+        raise ServiceError("No such file or directory: {}".format(token_type))
+
+    if not token_valid:
+        raise InvalidTokenError
 
 
 def read_kubelet_args_file(node=None):
@@ -278,6 +296,30 @@ def get_node_ep(hostname, remote_addr):
     return remote_addr
 
 
+@app.errorhandler(UnknownServiceError)
+def handle_unknown_service_error(ex):
+    """
+    Exception handler for UnknownServiceError.
+    """
+    return Response(json.dumps(ex.get_error()), mimetype="application/json", status=404)
+
+
+@app.errorhandler(ServiceError)
+def handle_service_error(ex):
+    """
+    Exception handler for ServiceError.
+    """
+    return Response(json.dumps(ex.get_error()), mimetype="application/json", status=500)
+
+
+@app.errorhandler(InvalidTokenError)
+def handle_invalid_token_error(ex):
+    """
+    Exception handler for InvalidTokenError.
+    """
+    return Response(json.dumps(ex.get_error()), mimetype="application/json", status=500)
+
+
 @app.route('/{}/join'.format(CLUSTER_API), methods=['POST'])
 def join_node():
     """
@@ -294,9 +336,7 @@ def join_node():
         port = request.form['port']
         callback_token = request.form['callback']
 
-    if not is_valid(token):
-        error_msg={"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    is_valid(token)
 
     add_token_to_certs_request(token)
     remove_token_from_file(token, cluster_tokens_file)
@@ -338,9 +378,7 @@ def sign_cert():
         cert_request = request.form['request']
 
     token = token.strip()
-    if not is_valid(token, certs_request_tokens_file):
-        error_msg={"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    is_valid(token, certs_request_tokens_file)
 
     remove_token_from_file(token, certs_request_tokens_file)
     signed_cert = sign_client_cert(cert_request, token)
@@ -360,9 +398,8 @@ def configure():
         configuration = json.loads(request.form['configuration'])
 
     callback_token = callback_token.strip()
-    if not is_valid(callback_token, callback_token_file):
-        error_msg={"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+
+    is_valid(callback_token, callback_token_file)
 
     # We expect something like this:
     '''
@@ -442,9 +479,8 @@ def version():
     """
     Web call to get microk8s version installed
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     output = subprocess.check_output("snap info microk8s".split())
 
     json_output = yaml.load(output)
@@ -467,9 +503,8 @@ def services():
       microk8s.daemon-proxy
       microk8s.daemon-scheduler
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     output = subprocess.check_output("snap info microk8s".split())
     json_output = yaml.load(output)
     return json_output["services"]
@@ -481,9 +516,8 @@ def service_restart():
     Web call to restart a service
     :request_param service: the name of the service
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     if "service" not in request.json or len(request.json["service"].strip()) == 0:
         error_msg = {"error": "Empty service provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
@@ -497,14 +531,22 @@ def service_start():
     Web call to start a service
     :request_param service: the name of the service
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    service_name = request.json["service"]
+
+    rest_call_validation(request)
+
     if "service" not in request.json or len(request.json["service"].strip()) == 0:
         error_msg = {"error": "Empty service provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
-    output = subprocess.check_output("systemctl start snap.{}.service".format(request.json["service"]).split())
-    return output
+
+    # Check if the requested service exists
+    ServiceUtils.check_if_service_exists(service_name)
+
+    subprocess.check_output("systemctl start snap.{}.service".format(service_name).split())
+
+    service_status = ServiceUtils.get_service_status(service_name)
+
+    return service_status
 
 
 @app.route('/{}/service/stop'.format(CLUSTER_API), methods=['POST'])
@@ -513,14 +555,22 @@ def service_stop():
     Web call to start a service
     :request_param service: the name of the service
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    service_name = request.json["service"]
+
+    rest_call_validation(request)
+
     if "service" not in request.json or len(request.json["service"].strip()) == 0:
         error_msg = {"error": "Empty service provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
-    output = subprocess.check_output("systemctl stop snap.{}.service".format(request.json["service"]).split())
-    return output
+
+    # Check if the requested service exists
+    ServiceUtils.check_if_service_exists(service_name)
+
+    subprocess.check_output("systemctl stop snap.{}.service".format(service_name).split())
+
+    service_status = ServiceUtils.get_service_status(service_name)
+
+    return service_status
 
 
 @app.route('/{}/service/enable'.format(CLUSTER_API), methods=['POST'])
@@ -529,14 +579,23 @@ def service_enable():
     Web call to enable a service
     :request_param service: the name of the service
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    service_name = request.json["service"]
+
+    rest_call_validation(request)
+
     if "service" not in request.json or len(request.json["service"].strip()) == 0:
         error_msg = {"error": "Empty service provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
-    output = subprocess.check_output("systemctl enable snap.{}.service".format(request.json["service"]).split())
-    return output
+
+    # Check if the requested service exists
+    ServiceUtils.check_if_service_exists(service_name)
+
+    subprocess.check_output("systemctl enable snap.{}.service".format(service_name).split())
+
+    service_status = ServiceUtils.get_service_status(service_name)
+
+    # Check the response for errors
+    return service_status
 
 
 @app.route('/{}/service/disable'.format(CLUSTER_API), methods=['POST'])
@@ -545,14 +604,22 @@ def service_disable():
     Web call to enable a service
     :request_param service: the name of the service
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    service_name = request.json["service"]
+
+    rest_call_validation(request)
+
     if "service" not in request.json or len(request.json["service"].strip()) == 0:
         error_msg = {"error": "Empty service provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
-    output = subprocess.check_output("systemctl disable snap.{}.service".format(request.json["service"]).split())
-    return output
+
+    # Check if the requested service exists
+    ServiceUtils.check_if_service_exists(service_name)
+
+    subprocess.check_output("systemctl disable snap.{}.service".format(service_name).split())
+
+    service_status = ServiceUtils.get_service_status(service_name)
+
+    return service_status
 
 
 @app.route('/{}/service/logs'.format(CLUSTER_API), methods=['POST'])
@@ -563,16 +630,18 @@ def service_logs():
     :request_param lines: total lines | if omitted default value 10 will be used
     """
     lines = 10
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+
+    rest_call_validation(request)
+
     if "service" not in request.json or len(request.json["service"].strip()) == 0:
         error_msg = {"error": "Empty service provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
     if "lines" in request.json:
         lines = request.json["lines"]
 
-    output = subprocess.check_output("journalctl --lines={} --unit=snap.{}.service --no-pager --output=json-pretty".format(lines, request.json["service"]).split())
+    output = subprocess.check_output(
+        "journalctl --lines={} --unit=snap.{}.service --no-pager --output=json-pretty".format(lines, request.json[
+            "service"]).split())
     return output
 
 
@@ -582,9 +651,8 @@ def enable():
     Web call to microk8s.enable <addon>
     :request_param addon: the name of the addon
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     if "addon" not in request.json or len(request.json["addon"].strip()) == 0:
         error_msg = {"error": "Empty addon provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
@@ -598,9 +666,8 @@ def disable():
     Web call to microk8s.disable <addon>
     :request_param addon: the name of the addon
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     if "addon" not in request.json or len(request.json["addon"].strip()) == 0:
         error_msg = {"error": "Empty addon provided"}
         return Response(json.dumps(error_msg), mimetype='application/json', status=400)
@@ -613,9 +680,8 @@ def start():
     """
     Web call for microk8s.start
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     output = subprocess.check_output("{}/microk8s-start.wrapper".format(snap_path).split())
     return output
 
@@ -625,9 +691,8 @@ def stop():
     """
     Web call for microk8s.stop
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     output = subprocess.check_output("{}/microk8s-stop.wrapper".format(snap_path).split())
     return output
 
@@ -637,9 +702,8 @@ def overview():
     """
     Web call to get the microk8s.kubectl get all --all-namespaces
     """
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
+
     output = subprocess.check_output("{}/microk8s-kubectl.wrapper get all --all-namespaces".format(snap_path).split())
     return output
 
@@ -650,9 +714,7 @@ def status():
     Web call to get the microk8s status
     """
     cmd = "{}/microk8s-status.wrapper -o yaml --timeout 60".format(snap_path)
-    if not rest_call_validation(request):
-        error_msg = {"error": "Invalid token"}
-        return Response(json.dumps(error_msg), mimetype='application/json', status=500)
+    rest_call_validation(request)
     if "addon" in request.json:
         cmd = "{}/microk8s-status.wrapper -a {}".format(snap_path, request.json["addon"])
 
@@ -668,12 +730,17 @@ def status():
 
 
 def rest_call_validation(request):
+    """
+    Validator for REST API Calls
+    """
     if request.headers['Content-Type'] == 'application/json':
-        print("Here {}".format(request.json))
+        logger.debug("Here {}".format(request.json))
         callback_token = request.json['callback']
     else:
         callback_token = request.form['callback']
-    return is_valid(callback_token, callback_token_file)
+
+    is_valid(callback_token, callback_token_file)
+
 
 
 def usage():

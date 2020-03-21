@@ -14,6 +14,7 @@ from .common.utils import try_set_file_permissions
 
 from flask import Flask, jsonify, request, abort, Response
 from flask_swagger_ui import get_swaggerui_blueprint
+from flask_swagger import swagger
 
 app = Flask(__name__)
 CLUSTER_API="cluster/api/v1.0"
@@ -28,7 +29,7 @@ default_listen_interface = "0.0.0.0"
 
 # -- swagger specific --
 SWAGGER_URL = '/swagger'
-API_URL = '/static/swagger.json'
+API_URL = '/swagger.json'
 SWAGGERUI_BLUEPRINT = get_swaggerui_blueprint(
     SWAGGER_URL,
     API_URL,
@@ -437,10 +438,46 @@ def configure():
     return resp
 
 
+@app.route("/swagger.json")
+def spec():
+    swag = swagger(app)
+    swag['info']['version'] = "1.0"
+    swag['info']['title'] = "MicroK8s REST API"
+    return jsonify(swag)
+
+
 @app.route('/{}/version'.format(CLUSTER_API), methods=['POST'])
 def version():
     """
-    Web call to get microk8s version installed
+    Web call to get MicroK8s version installed
+    ---
+    tags:
+    - MicroK8s
+    summary: Returns the installed version of MicroK8s
+    description: ""
+    operationId: version
+    parameters:
+    - in: body
+      name: JSON
+      description: Provide the token saved in callback-token file
+      schema:
+        type: object
+        required:
+        - callback
+        properties:
+            callback:
+                type: string
+                format: string
+    consumes:
+    - application/json
+    produces:
+    - application/json
+    - text/html
+    responses:
+      '200':
+        description: OK
+      '400':
+        description: Bad Request
     """
     if not rest_call_validation(request):
         error_msg = {"error": "Invalid token"}

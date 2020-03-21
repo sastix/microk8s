@@ -35,9 +35,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -65,9 +62,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -95,9 +89,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -155,9 +146,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -185,9 +173,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -217,9 +202,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -278,9 +260,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -309,9 +288,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -339,9 +315,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -369,9 +342,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -399,9 +369,6 @@
             }
           }
         },
-        "produces": [
-          "text/plain; charset=utf-8"
-        ],
         "responses": {
           "200": {
             "description": "OK"

@@ -182,6 +182,7 @@ parts:
     python-packages:
     - flask
     - flask_swagger_ui
+    - flask_swagger
     - PyYAML
     stage-packages:
     - python3-openssl
